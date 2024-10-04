@@ -11,13 +11,15 @@ class LandmarkDecoder(nn.Module):
         self.linear1 = nn.Linear(input_size, hidden_dim)        
         self.linear2 = nn.Linear(hidden_dim, output_size)
         self.shortcut = nn.Linear(input_size, output_size)
-        self.norm = nn.LayerNorm(output_size)
-        self.sigmoid = nn.Sigmoid()
+        # self.norm = nn.LayerNorm(output_size)
+        # self.sigmoid = nn.Sigmoid()
 
-    def forward(self, audio_feature, landmark_feature):
+    def forward(self, audio_feature, landmark_feature, llfs_feature=None):
         assert audio_feature.shape == landmark_feature.shape, "audio_feature and landmark_feature must have the same shape"
         
-        combined_feature = audio_feature + landmark_feature  # (B, N, 128)        
+        combined_feature = audio_feature + landmark_feature  # (B, N, 128)    
+        if llfs_feature is not None:
+            combined_feature = combined_feature + llfs_feature
         combined_feature = combined_feature.reshape(combined_feature.shape[0], -1)
         
         x = self.linear1(combined_feature)  # (B, hidden_dim)
@@ -27,8 +29,8 @@ class LandmarkDecoder(nn.Module):
         shortcut = self.shortcut(combined_feature)  # (B, output_dim)    
         output = x + shortcut  # (B, output_dim)
 
-        output = self.norm(output)
-        output = self.sigmoid(output)        
+        # output = self.norm(output)
+        # output = self.sigmoid(output)        
         output = output.reshape(output.shape[0],-1,2)
         
         return output

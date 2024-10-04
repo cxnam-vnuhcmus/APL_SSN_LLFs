@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 import cv2
 import numpy as np
 import torchvision
@@ -8,10 +9,10 @@ import os
 from typing import Union
 
 from .audio_encoder_apl import AudioEncoder
-from .llfs_encoder import LLFEncoder
+from .llfs_encoder_spec import LLFEncoder
 from .landmark_encoder_ssn import LandmarkEncoder
-from .landmark_decoder_llfs import LandmarkDecoder
-from .emotion_classifier import EmotionClassifier
+from .landmark_decoder_attn import LandmarkDecoder
+# from .emotion_classifier import EmotionClassifier
 from .utils import plot_landmark_connections, calculate_LMD
 from .loss import CustomLoss
 
@@ -32,17 +33,19 @@ class Model(nn.Module):
         self.infer_samples = infer_samples
         
         self.audio = AudioEncoder(input_dim=40)
-        self.llfs = AudioEncoder(input_dim=32)
+        self.llfs = LLFEncoder()
         self.landmark = LandmarkEncoder()
         self.decoder = LandmarkDecoder()
         
-        self.audio_emotion_classifier = EmotionClassifier()
-        self.landmark_emotion_classifier = EmotionClassifier()
-        self.llfs_emotion_classifier = EmotionClassifier()
+        # self.audio_emotion_classifier = EmotionClassifier()
+        # self.landmark_emotion_classifier = EmotionClassifier()
+        # self.llfs_emotion_classifier = EmotionClassifier()
         
         self.criterion = CustomLoss()
         self.kd_loss_fn = nn.KLDivLoss(reduction='batchmean')
-        self.ce_loss = nn.CrossEntropyLoss()
+        # self.ce_loss = nn.CrossEntropyLoss()
+        self.emo_lb_ce_loss = nn.CrossEntropyLoss()
+        self.emo_lv_ce_loss = nn.CrossEntropyLoss()
     
     @property
     def device(self):
@@ -56,37 +59,24 @@ class Model(nn.Module):
                 gt_lm,
                 gt_emo
                 ):
-        audio_features = self.audio(audio.to(self.device))
-        llfs_features = None
-        landmark_features = self.landmark(landmark.to(self.device))
+        audio_features = self.audio(audio.to(self.device))  # (B, N, 256)
+        landmark_features = self.landmark(landmark.to(self.device)) # (B, N, 256)
+        llfs_features, pred_emo = self.llfs(audio.to(self.device), llfs.to(self.device)) # (B, 256)
         
-        pred_features = self.decoder(audio_features, landmark_features, llfs_features) #(B,1,131,2)
+        llfs_features = llfs_features.unsqueeze(1)
+        pred_lm = self.decoder(audio_features, landmark_features, llfs_features) #(B,131,2)
         
-        pred_lm = pred_features[:,:262]
-        pred_lm = pred_lm.reshape(pred_lm.shape[0],-1,2)        
         lm_loss = self.loss_fn(pred_lm, gt_lm).to(self.device)
-        
-        pred_emo = pred_features[:,262:]
-        pred_ce_loss = self.ce_loss(pred_emo, gt_emo)
         
         log_audio_features = torch.log_softmax(audio_features, dim=-1)
         log_landmark_features = torch.softmax(landmark_features, dim=-1)
         kd_loss = self.kd_loss_fn(log_audio_features, log_landmark_features)
-        
-        audio_emotion_logits = self.audio_emotion_classifier(audio_features)
-        audio_emotion_logits = audio_emotion_logits.squeeze(1)
-        audio_ce_loss = self.ce_loss(audio_emotion_logits, gt_emo)
-        
-        landmark_emotion_logits = self.landmark_emotion_classifier(landmark_features)
-        landmark_emotion_logits = landmark_emotion_logits.squeeze(1)
-        landmark_ce_loss = self.ce_loss(landmark_emotion_logits, gt_emo)
-        
+                
         if llfs_features is not None:
-            llfs_emotion_logits = self.llfs_emotion_classifier(llfs_features)
-            llfs_emotion_logits = llfs_emotion_logits.squeeze(1)
-            llfs_ce_loss = self.ce_loss(llfs_emotion_logits, gt_emo)
-
-            loss = 2 * lm_loss + 1.5 * kd_loss #+ pred_ce_loss + audio_ce_loss + landmark_ce_loss + llfs_ce_loss
+            ce_loss_emotion = self.emo_lb_ce_loss(F.softmax(pred_emo[:, :8], dim=1), gt_emo[:, :8])
+            ce_loss_level = self.emo_lv_ce_loss(F.softmax(pred_emo[:, 8:], dim=1), gt_emo[:, 8:])
+            total_ce_loss = 8/11 * ce_loss_emotion + 3/11 * ce_loss_level
+            loss = 2 * lm_loss + 1.5 * kd_loss + 0.5 * total_ce_loss # pred_ce_loss + audio_ce_loss + landmark_ce_loss + 
         else:
             loss = 2 * lm_loss + 1.5 * kd_loss #+ pred_ce_loss + audio_ce_loss + landmark_ce_loss
         return (pred_lm), loss

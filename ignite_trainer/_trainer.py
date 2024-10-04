@@ -228,9 +228,10 @@ def run(experiment_name: str,
             n_saved=1,  # Số lượng checkpoint cần lưu
             filename_prefix=f'best_{setup_suffix}',
             global_step_transform=lambda e, _: e.state.epoch,  # Sử dụng số epoch làm global step
-            score_function=lambda engine: -engine.state.metrics['MSE'],
+            score_function = lambda engine: -engine.state.metrics['MSE'],
             score_name="MSE"
         )
+
         trainer.add_event_handler(ieng.Events.EPOCH_COMPLETED, handler)
         validator_eval.add_event_handler(ieng.Events.COMPLETED, best_handler)
 
@@ -308,10 +309,7 @@ def run(experiment_name: str,
             
             for metric_detail in performance_metrics:
                 metric_label = metric_detail["label"]
-                if isinstance(validator.state.metrics[metric_label], str):
-                    tqdm_info.append('{}: {}'.format(metric_label, validator.state.metrics[metric_label]))                        
-                else:
-                    tqdm_info.append('{}: {:.4f}'.format(metric_label, validator.state.metrics[metric_label]))
+                tqdm_info.append('{}: {}'.format(metric_label, validator.state.metrics[metric_label]))                        
             tqdm.tqdm.write('{} results - {}'.format(run_type, '; '.join(tqdm_info)))
             
             os.makedirs(f'{saved_models_path}/logs', exist_ok=True)
